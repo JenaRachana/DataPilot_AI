@@ -1,0 +1,33 @@
+[project]
+name = "datapilot-ai"
+version = "0.1.0"
+description = "An Agentic AI Assistant designed to automate key stages of the data science workflow."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "python-dotenv",
+
+    "langgraph",
+    "langchain",
+    "langchain-groq",
+    "langchain-ollama",
+    "langchain-google-genai",
+
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "matplotlib",
+    "seaborn",
+    "scipy",
+    "joblib",
+
+    "pydantic>=2",
+    "typing_extensions",
+
+    "jupyterlab",
+    "ipykernel",
+    "streamlit",
+
+    # Verify TLS against the OS trust store (portable; see utils/ssl_bootstrap.py).
+    "truststore",
+]
