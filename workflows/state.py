@@ -25,6 +25,9 @@ class GraphState(TypedDict):
     feature_metadata: Dict[str, str]
     feature_stats: Dict[str, Dict]
 
+    # ----- Per-phase generated code (latest LLM proposal for each phase) -----
+    preprocessing_code: Optional[str]
+
     # ----- Execution tracking (drives the self-healing retry loop) -----
     transformation_history: Annotated[List[str], append_list]
     last_executed_code: Optional[str]

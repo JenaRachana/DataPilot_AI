@@ -6,17 +6,32 @@ from workflows.state import GraphState
 from workflows.nodes.input_preparation_node import input_preparation_node
 from workflows.nodes.problem_definition_node import problem_definition_node
 
+from workflows.nodes.preprocessing_node import preprocessing_node
+from workflows.nodes.preprocessing_execution_node import preprocessing_execution_node
+
+from workflows.nodes.phase_base import make_error_router
+
 
 builder = StateGraph(GraphState)
 
 # ----- Nodes -----
 builder.add_node("input_preparation_node", input_preparation_node)
 builder.add_node("problem_definition_node", problem_definition_node)
+builder.add_node("preprocessing_node", preprocessing_node)
+builder.add_node("preprocessing_execution_node", preprocessing_execution_node)
 
 # ----- Edges -----
 builder.add_edge(START, "input_preparation_node")
 builder.add_edge("input_preparation_node", "problem_definition_node")
-builder.add_edge("problem_definition_node", END)
+builder.add_edge("problem_definition_node", "preprocessing_node")
+builder.add_edge("preprocessing_node", "preprocessing_execution_node")
+
+# Self-healing: re-plan on execution error, else finish.
+builder.add_conditional_edges(
+    "preprocessing_execution_node",
+    make_error_router("preprocessing_node", END),
+    ["preprocessing_node", END],
+)
 
 # In-memory checkpointing. To persist across restarts, swap for SqliteSaver:
 #   from langgraph.checkpoint.sqlite import SqliteSaver
