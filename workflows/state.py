@@ -27,9 +27,16 @@ class GraphState(TypedDict):
 
     # ----- Per-phase generated code (latest LLM proposal for each phase) -----
     preprocessing_code: Optional[str]
+    eda_code: Optional[str]
+
+    # Append-only log of every approved code block that was executed.
+    transformation_history: Annotated[List[str], append_list]
+
+    # ----- EDA outputs -----
+    eda_insights: Annotated[List[str], append_list]
+    eda_artifacts: Annotated[List[Dict], append_list]
 
     # ----- Execution tracking (drives the self-healing retry loop) -----
-    transformation_history: Annotated[List[str], append_list]
     last_executed_code: Optional[str]
     last_error: Optional[str]
 
