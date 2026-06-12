@@ -10,8 +10,8 @@ class GraphState(TypedDict):
     dataset: List[Dict]
     dataset_sample: List[Dict]
 
-    # Working frame that evolves through later phases. `dataset` is kept pristine;
-    # executors read/write `processed_dataset`.
+    # Working frame that evolves through preprocessing / feature engineering.
+    # `dataset` is kept pristine; executors read/write `processed_dataset`.
     processed_dataset: List[Dict]
 
     # ----- Problem definition -----
@@ -28,6 +28,7 @@ class GraphState(TypedDict):
     # ----- Per-phase generated code (latest LLM proposal for each phase) -----
     preprocessing_code: Optional[str]
     eda_code: Optional[str]
+    feature_engineering_code: Optional[str]
 
     # Append-only log of every approved code block that was executed.
     transformation_history: Annotated[List[str], append_list]
