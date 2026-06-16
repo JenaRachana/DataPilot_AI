@@ -29,6 +29,7 @@ class GraphState(TypedDict):
     preprocessing_code: Optional[str]
     eda_code: Optional[str]
     feature_engineering_code: Optional[str]
+    modeling_code: Optional[str]
 
     # Append-only log of every approved code block that was executed.
     transformation_history: Annotated[List[str], append_list]
@@ -36,6 +37,10 @@ class GraphState(TypedDict):
     # ----- EDA outputs -----
     eda_insights: Annotated[List[str], append_list]
     eda_artifacts: Annotated[List[Dict], append_list]
+
+    # ----- Modeling outputs -----
+    model_results: Annotated[List[Dict], append_list]
+    best_model: Optional[Dict]
 
     # ----- Execution tracking (drives the self-healing retry loop) -----
     last_executed_code: Optional[str]
