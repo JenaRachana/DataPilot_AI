@@ -20,6 +20,9 @@ from workflows.nodes.feature_engineering_execution_node import (
 from workflows.nodes.modeling_node import modeling_node
 from workflows.nodes.training_execution_node import training_execution_node
 
+from workflows.nodes.evaluation_node import evaluation_node
+from workflows.nodes.evaluation_execution_node import evaluation_execution_node
+
 from workflows.nodes.phase_base import make_error_router
 
 
@@ -38,6 +41,8 @@ builder.add_node(
 )
 builder.add_node("modeling_node", modeling_node)
 builder.add_node("training_execution_node", training_execution_node)
+builder.add_node("evaluation_node", evaluation_node)
+builder.add_node("evaluation_execution_node", evaluation_execution_node)
 
 # ----- Edges -----
 builder.add_edge(START, "input_preparation_node")
@@ -47,6 +52,7 @@ builder.add_edge("preprocessing_node", "preprocessing_execution_node")
 builder.add_edge("eda_node", "eda_execution_node")
 builder.add_edge("feature_engineering_node", "feature_engineering_execution_node")
 builder.add_edge("modeling_node", "training_execution_node")
+builder.add_edge("evaluation_node", "evaluation_execution_node")
 
 # Self-healing: re-plan on execution error, else advance.
 builder.add_conditional_edges(
@@ -66,8 +72,13 @@ builder.add_conditional_edges(
 )
 builder.add_conditional_edges(
     "training_execution_node",
-    make_error_router("modeling_node", END),
-    ["modeling_node", END],
+    make_error_router("modeling_node", "evaluation_node"),
+    ["modeling_node", "evaluation_node"],
+)
+builder.add_conditional_edges(
+    "evaluation_execution_node",
+    make_error_router("evaluation_node", END),
+    ["evaluation_node", END],
 )
 
 # In-memory checkpointing. To persist across restarts, swap for SqliteSaver:
