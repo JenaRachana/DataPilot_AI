@@ -43,8 +43,9 @@ class GraphState(TypedDict):
     model_results: Annotated[List[Dict], append_list]
     best_model: Optional[Dict]
 
-    # ----- Evaluation -----
+    # ----- Evaluation & deployment -----
     evaluation_report: Optional[Dict]
+    deployment_artifacts: List[Dict]
 
     # ----- Execution tracking (drives the self-healing retry loop) -----
     last_executed_code: Optional[str]
