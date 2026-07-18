@@ -1,0 +1,57 @@
+# DataPilot AI dark theme.
+# Keep these hex values in sync with utils/theme.py (single source for the
+# Python side; TOML can't import it, so this file is a literal duplicate).
+
+[server]
+# The default watcher canonicalizes the script path via a Rust extension,
+# which fails ("Failed to canonicalize script path") on OneDrive-backed
+# folders with Files On-Demand placeholders — common on managed Windows
+# profiles where Downloads is redirected into OneDrive. This trades
+# auto-rerun-on-save for the app actually starting; not a security setting.
+fileWatcherType = "none"
+
+[theme]
+base = "dark"
+primaryColor = "#3987e5"
+backgroundColor = "#0d0d0d"
+secondaryBackgroundColor = "#1a1a19"
+textColor = "#ffffff"
+font = "sans serif"
+linkColor = "#3987e5"
+borderColor = "rgba(255, 255, 255, 0.10)"
+baseRadius = "medium"
+buttonRadius = "medium"
+showWidgetBorder = true
+showSidebarBorder = true
+
+codeFont = "monospace"
+codeBackgroundColor = "#111110"
+codeTextColor = "#e6e6e6"
+
+dataframeBorderColor = "#2c2c2a"
+dataframeHeaderBackgroundColor = "#1f1f1e"
+
+# Named color tokens (used by st.badge/st.status colors) remapped to the
+# validated status + categorical palette, so built-in colored widgets stay
+# consistent with the charts and custom CSS.
+blueColor = "#3987e5"
+greenColor = "#0ca30c"
+redColor = "#d03b3b"
+orangeColor = "#ec835a"
+yellowColor = "#fab219"
+violetColor = "#9085e9"
+grayColor = "#898781"
+
+# Categorical chart palette (fixed hue order — never cycled).
+chartCategoricalColors = [
+    "#3987e5", "#199e70", "#c98500", "#008300",
+    "#9085e9", "#e66767", "#d55181", "#d95926",
+]
+
+# Sequential ramp for continuous magnitude, ordered near-zero (recedes toward
+# the dark surface) -> high-magnitude (brightest), per the dark-mode ordinal
+# rule (near-surface anchor no darker than step 600).
+chartSequentialColors = [
+    "#184f95", "#1c5cab", "#256abf", "#2a78d6", "#3987e5",
+    "#5598e7", "#6da7ec", "#86b6ef", "#9ec5f4", "#cde2fb",
+]
