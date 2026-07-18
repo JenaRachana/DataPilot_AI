@@ -19,9 +19,71 @@ import pandas as pd
 
 from workflows.graph import graph
 from langgraph.types import Command
-from utils.llm import available_models, set_model
+from utils.llm import available_models, set_model, get_model
 
-st.set_page_config(page_title="DataPilot AI", layout="wide")
+# Optional, machine-local override (never committed — see .git/info/exclude).
+# Lets one machine force a specific model/backend without touching tracked
+# code. Absent on a fresh clone, so the normal dropdown is the default path.
+try:
+    from utils import llm_local as _llm_local
+except ImportError:
+    _llm_local = None
+
+_HIDE_MODEL_SELECTOR = bool(_llm_local and getattr(_llm_local, "HIDE_MODEL_SELECTOR", False))
+
+st.set_page_config(page_title="DataPilot AI", page_icon="🧭", layout="wide")
+
+# --------------------------------------------------------------------------- #
+# Theme CSS — dark "modern SaaS dashboard" chrome on top of .streamlit/config.toml.
+# Static string, no user input interpolated, so unsafe_allow_html is safe here.
+# --------------------------------------------------------------------------- #
+st.markdown(
+    """
+    <style>
+    .dp-header {
+        display: flex; align-items: center; gap: 0.9rem;
+        padding: 0.1rem 0 1.15rem 0;
+    }
+    .dp-header .dp-icon { font-size: 2.1rem; line-height: 1; }
+    .dp-header .dp-titles h1 {
+        margin: 0; font-size: 1.55rem; font-weight: 700; letter-spacing: -0.01em;
+    }
+    .dp-header .dp-titles p {
+        margin: 0.15rem 0 0 0; font-size: 0.88rem; color: #898781;
+    }
+
+    .dp-section-label {
+        font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
+        text-transform: uppercase; color: #75736d; margin: 0.2rem 0 0.5rem 0;
+    }
+
+    .dp-stepper { display: flex; align-items: center; flex-wrap: wrap; gap: 0; margin: 0.2rem 0 1.4rem 0; }
+    .dp-step {
+        display: flex; align-items: center; gap: 0.4rem;
+        padding: 0.32rem 0.8rem; border-radius: 999px;
+        font-size: 0.80rem; font-weight: 600; white-space: nowrap;
+        border: 1px solid transparent;
+    }
+    .dp-step .dp-dot { font-size: 0.6rem; }
+    .dp-step.done    { background: rgba(12,163,12,0.14);   color: #4fd44f; }
+    .dp-step.current { background: rgba(57,135,229,0.16);  color: #86b6ef; border-color: rgba(57,135,229,0.55); }
+    .dp-step.pending { background: rgba(255,255,255,0.035); color: #75736d; }
+    .dp-connector { flex: 0 0 20px; height: 1px; background: #383835; margin: 0 1px; }
+
+    [class*="st-key-dp-card"] {
+        background: #1a1a19;
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 14px;
+    }
+
+    div[data-testid="stCode"] pre, div[data-testid="stCodeBlock"] pre {
+        border: 1px solid rgba(255,255,255,0.10) !important;
+        border-radius: 10px !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # Pipeline phases, in order, for the progress stepper. Keys match interrupt
 # payload `phase` values and node-name prefixes.
@@ -115,12 +177,15 @@ def render_stepper(snapshot):
     parts = []
     for i, (_, label) in enumerate(PHASES):
         if done or i < cur_idx:
-            parts.append(f"✅ {label}")
+            state, dot = "done", "●"
         elif i == cur_idx:
-            parts.append(f"🔵 **{label}**")
+            state, dot = "current", "●"
         else:
-            parts.append(f"⚪ {label}")
-    st.markdown("&nbsp;&nbsp;›&nbsp;&nbsp;".join(parts))
+            state, dot = "pending", "○"
+        parts.append(f'<span class="dp-step {state}"><span class="dp-dot">{dot}</span>{label}</span>')
+        if i < len(PHASES) - 1:
+            parts.append('<span class="dp-connector"></span>')
+    st.markdown(f'<div class="dp-stepper">{"".join(parts)}</div>', unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -188,22 +253,34 @@ def render_dataset_tab(values):
                 st.dataframe(pd.DataFrame(cat_rows), width="stretch")
 
 
+_PHASE_TITLES = {"eda": "📊 Exploratory Data Analysis", "evaluation": "📈 Evaluation"}
+
+
 def render_charts_tab(values):
     insights = values.get("eda_insights", [])
     artifacts = values.get("eda_artifacts", [])
     if not insights and not artifacts:
         st.info("EDA and evaluation charts will appear here as they're produced.")
         return
-    for insight in insights:
-        st.markdown(f"- {insight}")
+
+    if insights:
+        with st.container(border=True, key="dp-card-insights"):
+            st.markdown('<p class="dp-section-label">Key insights</p>', unsafe_allow_html=True)
+            for insight in insights:
+                st.markdown(f"- {insight}")
+
+    by_phase: dict = {}
     for art in artifacts:
         path = art.get("path")
         if path and Path(path).exists():
-            caption = art.get("title", "")
-            phase = art.get("phase")
-            if phase:
-                caption = f"{caption} ({phase})"
-            st.image(path, caption=caption, width="stretch")
+            by_phase.setdefault(art.get("phase", "chart"), []).append(art)
+
+    for phase, arts in by_phase.items():
+        st.markdown(f"**{_PHASE_TITLES.get(phase, phase.title())}**")
+        cols = st.columns(2)
+        for i, art in enumerate(arts):
+            with cols[i % 2]:
+                st.image(art["path"], caption=art.get("title", ""), width="stretch")
 
 
 def render_console_tab(values):
@@ -218,6 +295,7 @@ def render_console_tab(values):
         phase = entry.get("phase", "?")
         stdout = (entry.get("stdout") or "").strip()
         error = (entry.get("error") or "").strip()
+        outputs = entry.get("outputs") or {}
 
         if ok:
             summary = "ran successfully"
@@ -231,14 +309,18 @@ def render_console_tab(values):
             if stdout:
                 st.caption("stdout")
                 st.code(stdout, language="text")
+            if outputs:
+                st.caption("outputs produced by this run")
+                st.json(outputs)
             if error:
                 st.caption("traceback")
                 st.code(error, language="text")
-            if not stdout and not error:
-                st.caption("(no output)")
+            if not stdout and not outputs and not error:
+                st.caption("(no output — this step's code didn't print anything or populate `outputs`)")
 
 
 def render_inspector(values):
+    st.markdown('<p class="dp-section-label">Live data &amp; artifacts</p>', unsafe_allow_html=True)
     tab_data, tab_charts, tab_console = st.tabs(["📊 Dataset", "📈 Charts", "🖥 Console"])
     with tab_data:
         render_dataset_tab(values)
@@ -258,7 +340,7 @@ def render_problem_definition_review(payload):
     st.subheader("Human Review — Problem Definition")
     st.info(payload["message"])
 
-    with st.container(border=True):
+    with st.container(border=True, key="dp-card-recommended"):
         st.markdown("**Recommended**")
         st.write(f"Target column: `{recommended['target_column']}`")
         st.write(f"Problem type: `{recommended['problem_type']}`")
@@ -287,8 +369,17 @@ def render_code_review(payload):
     code = payload.get("code", "")
     st.subheader(f"Human Review — {phase.replace('_', ' ').title()}")
     st.info(payload["message"])
+
+    # Key widgets on the code content so a regenerated version produces a FRESH
+    # widget (Streamlit ignores `value=` for an existing key).
+    token = hashlib.md5(code.encode("utf-8")).hexdigest()[:8]
+
+    with st.container(border=True, key=f"dp-card-code-{token}"):
+        st.markdown('<p class="dp-section-label">Generated code</p>', unsafe_allow_html=True)
+        st.code(code, language="python")
+
     if payload.get("explanation"):
-        with st.expander("What this code does", expanded=True):
+        with st.expander("What this code does", expanded=False):
             st.markdown(payload["explanation"])
 
     previous_error = payload.get("previous_error")
@@ -303,13 +394,6 @@ def render_code_review(payload):
     for warning in payload.get("warnings", []):
         st.warning(warning)
 
-    # Key widgets on the code content so a regenerated version produces a FRESH
-    # widget (Streamlit ignores `value=` for an existing key).
-    token = hashlib.md5(code.encode("utf-8")).hexdigest()[:8]
-
-    st.markdown("**Generated code**")
-    st.code(code, language="python")
-
     comments = st.text_area(
         "Comments / instructions for the AI (optional)",
         height=80,
@@ -319,10 +403,10 @@ def render_code_review(payload):
 
     col_run, col_regen = st.columns(2)
     with col_run:
-        if st.button("✅ Approve & run", type="primary", key=f"approve_{phase}_{token}"):
+        if st.button("✅ Approve & run", type="primary", key=f"approve_{phase}_{token}", width="stretch"):
             _resume({"action": "approve", "code": code, "comments": comments})
     with col_regen:
-        if st.button("🔄 Regenerate", key=f"regen_{phase}_{token}"):
+        if st.button("🔄 Regenerate", key=f"regen_{phase}_{token}", width="stretch"):
             _resume({"action": "regenerate", "comments": comments})
 
 
@@ -346,8 +430,34 @@ def render_review(payload):
         render_plan_review(payload)
 
 
+def _format_metric(value):
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    return str(value) if value is not None else "—"
+
+
 def render_results(values):
-    st.success("✅ Workflow complete.")
+    best = values.get("best_model") or {}
+    metrics = best.get("metrics", {}) if best else {}
+    primary_name, primary_val = (next(iter(metrics.items())) if metrics else (None, None))
+
+    st.markdown('<p class="dp-section-label">Run summary</p>', unsafe_allow_html=True)
+    target_val = values.get("target_column") or "—"
+    problem_val = (values.get("problem_type") or "—").title()
+    model_val = best.get("name") or "—"
+    metric_label = primary_name.replace("_", " ").title() if primary_name else "Primary metric"
+    metric_val = _format_metric(primary_val)
+
+    # 2x2 grid (not 4-in-a-row) so long values like a model class name have room
+    # before Streamlit's metric truncates them; `help` shows the full text either way.
+    row1_a, row1_b = st.columns(2)
+    row1_a.metric("Target column", target_val, help=target_val)
+    row1_b.metric("Problem type", problem_val, help=problem_val)
+    row2_a, row2_b = st.columns(2)
+    row2_a.metric("Best model", model_val, help=model_val)
+    row2_b.metric(metric_label, metric_val, help=metric_val)
+
+    st.success("✅ Workflow complete — full pipeline executed end to end.")
 
     with st.expander("Problem Definition", expanded=True):
         st.write(f"Target column: `{values.get('target_column')}`")
@@ -355,7 +465,6 @@ def render_results(values):
         st.write(values.get("problem_definition_reason", ""))
 
     results = values.get("model_results", [])
-    best = values.get("best_model") or {}
     if results or best:
         with st.expander("Modeling", expanded=True):
             if best:
@@ -437,29 +546,45 @@ def render_sidebar_logs(values):
 
 
 # --------------------------------------------------------------------------- #
+# Header
+# --------------------------------------------------------------------------- #
+st.markdown(
+    """
+    <div class="dp-header">
+        <div class="dp-icon">🧭</div>
+        <div class="dp-titles">
+            <h1>DataPilot AI</h1>
+            <p>An agentic data-science copilot — every step proposed by an LLM, approved by you, then run.</p>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# --------------------------------------------------------------------------- #
 # Sidebar inputs
 # --------------------------------------------------------------------------- #
-st.title("DataPilot AI")
+with st.sidebar:
+    st.markdown('<p class="dp-section-label">Dataset &amp; goal</p>', unsafe_allow_html=True)
+    uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
+    business_problem = st.text_input("Business problem", placeholder="e.g., Predict house price")
 
-st.sidebar.header("Inputs")
-uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
-business_problem = st.sidebar.text_input(
-    "Business problem", placeholder="e.g., Predict house price"
-)
+    if not _HIDE_MODEL_SELECTOR:
+        st.markdown('<p class="dp-section-label">Model</p>', unsafe_allow_html=True)
+        _models = available_models()
+        selected_model = st.selectbox(
+            "LLM model",
+            list(_models.keys()),
+            format_func=lambda mid: _models[mid],
+            help="Used for all reasoning / code-generation steps. Changeable between runs.",
+        )
+        set_model(selected_model)
 
-_models = available_models()
-selected_model = st.sidebar.selectbox(
-    "LLM model",
-    list(_models.keys()),
-    format_func=lambda mid: _models[mid],
-    help="Used for all reasoning / code-generation steps. Changeable between runs.",
-)
-set_model(selected_model)
-
-run_clicked = st.sidebar.button("▶ Run workflow", type="primary")
-if st.sidebar.button("↺ Reset"):
-    reset_session()
-    st.rerun()
+    st.markdown('<p class="dp-section-label">Controls</p>', unsafe_allow_html=True)
+    run_clicked = st.button("▶ Run workflow", type="primary", width="stretch")
+    if st.button("↺ Reset", width="stretch"):
+        reset_session()
+        st.rerun()
 
 # --------------------------------------------------------------------------- #
 # Main flow
@@ -491,10 +616,10 @@ if run_clicked and not st.session_state.started:
         st.rerun()
 
 if not st.session_state.started:
-    st.subheader("Dataset Preview")
+    st.markdown('<p class="dp-section-label">Dataset preview</p>', unsafe_allow_html=True)
     st.dataframe(df.head(), width="stretch")
     st.caption(f"Shape: {df.shape[0]} rows × {df.shape[1]} columns")
-    st.info("Pick your model in the sidebar and click **Run workflow**.")
+    st.info("Set your goal in the sidebar and click **Run workflow**.")
     st.stop()
 
 # ---- Cockpit: stepper on top, action left, inspector right ----
@@ -502,11 +627,11 @@ snapshot = graph.get_state(get_config())
 values = snapshot.values
 
 render_stepper(snapshot)
-st.divider()
 
 action_col, inspector_col = st.columns([3, 2], gap="large")
 
 with action_col:
+    st.markdown('<p class="dp-section-label">Workflow</p>', unsafe_allow_html=True)
     if snapshot.interrupts:
         render_review(snapshot.interrupts[0].value)
     elif not snapshot.next:
