@@ -31,11 +31,58 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
+from cycler import cycler  # noqa: E402
+
+from utils import theme  # noqa: E402
 
 try:
     import seaborn as sns  # noqa: F401
 except Exception:  # pragma: no cover - seaborn is a declared dependency
     sns = None
+
+
+# --------------------------------------------------------------------------- #
+# Dark-theme defaults for every chart the LLM generates (EDA + evaluation).
+# Applied globally at import time so generated code inherits a consistent,
+# readable-on-dark look without needing to set any colors itself.
+# --------------------------------------------------------------------------- #
+_sequential_cmap = LinearSegmentedColormap.from_list("datapilot_sequential", theme.SEQUENTIAL)
+try:
+    matplotlib.colormaps.register(_sequential_cmap, name="datapilot_sequential")
+except ValueError:
+    pass  # already registered (module re-imported, e.g. Streamlit hot-reload)
+
+plt.rcParams.update({
+    "figure.facecolor": theme.SURFACE,
+    "axes.facecolor": theme.SURFACE,
+    "savefig.facecolor": theme.SURFACE,
+    "axes.edgecolor": theme.BASELINE,
+    "axes.labelcolor": theme.TEXT_SECONDARY,
+    "text.color": theme.TEXT_PRIMARY,
+    "xtick.color": theme.TEXT_MUTED,
+    "ytick.color": theme.TEXT_MUTED,
+    "grid.color": theme.GRIDLINE,
+    "axes.grid": True,
+    "axes.prop_cycle": cycler(color=theme.CATEGORICAL),
+    "image.cmap": "datapilot_sequential",
+    "legend.facecolor": theme.SURFACE,
+    "legend.edgecolor": theme.BASELINE,
+    "legend.labelcolor": theme.TEXT_PRIMARY,
+    "font.family": "sans-serif",
+})
+
+if sns is not None:
+    sns.set_palette(theme.CATEGORICAL)
+    sns.set_style("darkgrid", {
+        "axes.facecolor": theme.SURFACE,
+        "figure.facecolor": theme.SURFACE,
+        "grid.color": theme.GRIDLINE,
+        "axes.edgecolor": theme.BASELINE,
+        "text.color": theme.TEXT_PRIMARY,
+        "xtick.color": theme.TEXT_MUTED,
+        "ytick.color": theme.TEXT_MUTED,
+    })
 
 
 # Patterns that warrant a reviewer's attention. These do NOT block execution;
@@ -133,7 +180,38 @@ def run_code(code: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, A
 _KWARG_ERROR = re.compile(
     r"(\w[\w.]*?)(?:\.__init__)?\(\) got an unexpected keyword argument '(\w+)'"
 )
+# Some libraries (e.g. scikit-learn's @validate_params decorator) validate
+# keyword arguments in a wrapper before the real function is ever entered, so
+# neither the message nor the traceback names the function — just the bad
+# kwarg. When _KWARG_ERROR doesn't match, fall back to this and recover the
+# function name from the failing code's own AST instead.
+_BARE_KWARG_ERROR = re.compile(r"got an unexpected keyword argument '(\w+)'")
 _MODULE_ATTR_ERROR = re.compile(r"module '([\w.]+)' has no attribute '(\w+)'")
+
+
+def _dotted_call_name(node: ast.expr) -> Optional[str]:
+    """Reconstruct a dotted name from a Call's func node (Name or Attribute chain)."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted_call_name(node.value)
+        return f"{base}.{node.attr}" if base else node.attr
+    return None
+
+
+def _call_names_with_kwarg(code: str, kwarg_name: str) -> List[str]:
+    """Find (dotted) names of functions called with a given keyword argument."""
+    names: List[str] = []
+    try:
+        tree = ast.parse(code or "")
+    except Exception:
+        return names
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and any(kw.arg == kwarg_name for kw in node.keywords):
+            name = _dotted_call_name(node.func)
+            if name:
+                names.append(name)
+    return names
 
 
 def _import_map(code: str) -> Dict[str, tuple]:
@@ -193,7 +271,9 @@ def build_api_hint(error_text: Optional[str], code: Optional[str]) -> str:
     import_map = _import_map(code or "")
     hints: List[str] = []
 
+    matched_kwargs = set()
     for symbol, bad_kwarg in _KWARG_ERROR.findall(error_text):
+        matched_kwargs.add(bad_kwarg)
         obj = _resolve(symbol, import_map)
         sig = _safe_signature(obj)
         if sig:
@@ -201,6 +281,20 @@ def build_api_hint(error_text: Optional[str], code: Optional[str]) -> str:
                 f"`{symbol}` does not accept `{bad_kwarg}` in the installed version. "
                 f"Its real signature here is: {symbol}{sig}"
             )
+
+    # Fallback: the error omitted the function name (see _BARE_KWARG_ERROR docstring
+    # note above) — recover the candidate function(s) from the code's own call sites.
+    for bad_kwarg in _BARE_KWARG_ERROR.findall(error_text):
+        if bad_kwarg in matched_kwargs:
+            continue
+        for symbol in _call_names_with_kwarg(code or "", bad_kwarg):
+            obj = _resolve(symbol, import_map)
+            sig = _safe_signature(obj)
+            if sig:
+                hints.append(
+                    f"`{symbol}` does not accept `{bad_kwarg}` in the installed version. "
+                    f"Its real signature here is: {symbol}{sig}"
+                )
 
     for module_path, bad_attr in _MODULE_ATTR_ERROR.findall(error_text):
         try:
