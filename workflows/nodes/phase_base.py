@@ -37,7 +37,11 @@ def _to_native(obj):
         return obj.tolist()
     if isinstance(obj, np.generic):
         return obj.item()
-    return obj
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    # Anything else (a matplotlib Figure, a DataFrame, ...) isn't checkpoint-safe;
+    # fall back to a display-safe string rather than letting the checkpointer crash.
+    return str(obj)
 
 
 def build_context(state: GraphState) -> Tuple[Dict[str, Any], pd.DataFrame]:
@@ -216,6 +220,7 @@ def make_execution_node(
                     "ok": True,
                     "stdout": result.get("stdout", ""),
                     "error": "",
+                    "outputs": _to_native(result.get("outputs") or {}),
                 }
             ],
             "event_logs": [
