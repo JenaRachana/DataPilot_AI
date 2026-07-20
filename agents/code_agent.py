@@ -137,9 +137,18 @@ Rules:
 - Use APIs compatible with the installed versions above. For example, in
   scikit-learn >= 1.2 `OneHotEncoder` uses `sparse_output=False` (the old
   `sparse=` argument was removed); prefer `pd.get_dummies` for simple encoding.
+  Likewise, `mean_squared_error(...)` no longer accepts `squared=` — for RMSE,
+  either call `root_mean_squared_error(...)` or take
+  `mean_squared_error(...) ** 0.5` yourself.
 - When you build a DataFrame from a transformer's output, ensure the column count
   matches (use the transformer's output feature names), or keep it as an array.
 - Do not call input(), exit(), or any networking/OS/subprocess APIs.
+- If you produce a matplotlib/seaborn chart: the app already applies a dark
+  theme (colors, palette, background) globally — do NOT set custom colors,
+  styles, or facecolors, and do NOT call `plt.style.use(...)`. Always add a
+  descriptive title and axis labels, and a legend for any multi-series plot
+  (color alone should never be the only way to tell series apart). For
+  heatmaps/continuous color scales, pass `cmap="datapilot_sequential"`.
 
 Respond in exactly this format and nothing else:
 1. A clear, SPECIFIC explanation of what the code does — walk through it step by
